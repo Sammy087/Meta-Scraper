@@ -1,0 +1,29 @@
+tiktok download tool
+
+http://178.79.157.186
+
+
+file browser
+
+http://178.79.157.186:81
+
+username
+
+admin
+
+password
+
+Dk49Lza5SoSu72eY6IvD
+
+
+logs view
+
+http://178.79.157.186:82
+
+linux server ssh
+
+ssh root@178.79.157.186
+
+password
+
+nQ761j8f92BufXpGFiS7
