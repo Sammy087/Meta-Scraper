@@ -12,16 +12,15 @@ from dash.dependencies import Input, Output, State
 import dash_bootstrap_components as dbc
 import base64
 
+# Apply the moviepy patch
+import patch_moviepy
+
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def generate_background_image(width, height):
-    # Generate a random color
     color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
-    
-    # Create a ColorClip with the random color
     background = ColorClip((width, height), color=color)
-    
     return background
 
 def wait_for_file_release(filepath, timeout=10):
@@ -85,66 +84,6 @@ def change_icc_profile(input_file, output_file):
         logging.error(f"Error changing ICC profile: {result.stderr.decode()}")
     return result.returncode == 0
 
-def get_video_info(input_path):
-    result = subprocess.run(
-        ['ffprobe', '-v', 'quiet', '-print_format', 'json', '-show_format', '-show_streams', input_path],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE
-    )
-    data = json.loads(result.stdout)
-    duration = float(data['format']['duration'])
-    video_stream = next(s for s in data['streams'] if s['codec_type'] == 'video')
-    framerate = eval(video_stream['r_frame_rate'])
-    return duration, framerate
-
-def split_video_ffmpeg(input_path):
-    segment_paths = []
-    first_segment_path = f"segment_1_{random.randint(1000, 9999)}.mp4"
-    second_segment_path = f"segment_2_{random.randint(1000, 9999)}.mp4"
-    
-    duration, framerate = get_video_info(input_path)
-    mid_point = duration / 2
-    
-    # Calculate the exact frame number for the mid-point
-    mid_frame = int(mid_point * framerate)
-    mid_point_exact = mid_frame / framerate
-
-    # Split the video into two parts
-    subprocess.run([
-        'ffmpeg', '-i', input_path, 
-        '-t', str(mid_point_exact), 
-        '-c:v', 'libx264', '-preset', 'slow', '-crf', '18', 
-        '-c:a', 'aac', '-b:a', '192k',
-        '-avoid_negative_ts', 'make_zero',
-        first_segment_path
-    ])
-    subprocess.run([
-        'ffmpeg', '-i', input_path, 
-        '-ss', str(mid_point_exact), 
-        '-c:v', 'libx264', '-preset', 'slow', '-crf', '18', 
-        '-c:a', 'aac', '-b:a', '192k',
-        second_segment_path
-    ])
-    
-    segment_paths.append(first_segment_path)
-    segment_paths.append(second_segment_path)
-    
-    return segment_paths
-
-def concatenate_videos_ffmpeg(segment_paths, output_path):
-    with open("concat_list.txt", "w") as f:
-        for segment_path in segment_paths:
-            f.write(f"file '{segment_path}'\n")
-    subprocess.run([
-        'ffmpeg', '-f', 'concat', '-safe', '0', '-i', 'concat_list.txt', 
-        '-c', 'copy', '-movflags', '+faststart', 
-        output_path
-    ])
-    # Clean up
-    os.remove("concat_list.txt")
-    for segment_path in segment_paths:
-        os.remove(segment_path)
-
 def force_close_file(filepath):
     max_retries = 5
     for attempt in range(max_retries):
@@ -163,7 +102,6 @@ def clean_video(input_path, output_path):
     temp_output1 = f"temp1_video_{random.randint(1000, 9999)}.mp4"
     temp_output2 = f"temp2_video_{random.randint(1000, 9999)}.mp4"
     temp_output3 = f"temp3_video_{random.randint(1000, 9999)}.mp4"
-    temp_output4 = f"temp4_video_{random.randint(1000, 9999)}.mp4"
     try:
         # Adjust video properties
         logging.info(f"Adjusting video properties for {input_path}")
@@ -194,7 +132,7 @@ def clean_video(input_path, output_path):
         if not force_close_file(temp_output2):
             return False
         
-        # Split the video into 2 parts
+        # Add background image
         logging.info(f"Adding background image to {temp_output3}")
         video = VideoFileClip(temp_output3)
         bg_width = random.randint(int(video.w * 0.8), video.w)
@@ -207,22 +145,12 @@ def clean_video(input_path, output_path):
         pos_y = (video.h - bg_height) // 2
         
         final = CompositeVideoClip([video, background.set_position((pos_x, pos_y))])
-        final.write_videofile(temp_output4, codec='libx264', audio_codec='aac')
+        final.write_videofile(output_path, codec='libx264', audio_codec='aac')
         video.close()
         final.close()
         
         if not force_close_file(temp_output3):
             return False
-        
-        # Split the video into 2 parts
-        logging.info(f"Splitting video {temp_output4}")
-        segment_paths = split_video_ffmpeg(temp_output4)
-        if not segment_paths:
-            return False
-        
-        # Concatenate the segments back together
-        logging.info(f"Concatenating video segments")
-        concatenate_videos_ffmpeg(segment_paths, output_path)
         
         logging.info(f"Video cleaned and saved as: {output_path}")
         return True
@@ -231,13 +159,13 @@ def clean_video(input_path, output_path):
         return False
     finally:
         # Clean up all temporary files
-        for temp_file in [temp_output1, temp_output2, temp_output3, temp_output4]:
+        for temp_file in [temp_output1, temp_output2, temp_output3]:
             if os.path.exists(temp_file):
                 force_close_file(temp_file)
 
 def cleanup_temp_files():
     for temp_file in os.listdir('.'):
-        if temp_file.startswith('temp') or temp_file.startswith('segment_'):
+        if temp_file.startswith('temp'):
             force_close_file(temp_file)
 
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
