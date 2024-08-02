@@ -4,16 +4,14 @@ import random
 import subprocess
 import time
 import json
-from moviepy.editor import VideoFileClip, CompositeVideoClip, ColorClip
+from moviepy.editor import VideoFileClip, CompositeVideoClip, ColorClip, TextClip
+from PIL import Image, ImageDraw, ImageFont
 import yt_dlp as youtube_dl
 import dash
 from dash import html, dcc
 from dash.dependencies import Input, Output, State
 import dash_bootstrap_components as dbc
 import base64
-
-# Apply the moviepy patch
-import patch_moviepy
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -41,6 +39,43 @@ def download_video(url, output_path):
     }
     with youtube_dl.YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
+
+def add_watermark_to_image(input_image_path, output_image_path, watermark_text="Sample Watermark"):
+    try:
+        image = Image.open(input_image_path).convert("RGBA")
+        watermark = Image.new("RGBA", image.size)
+        draw = ImageDraw.Draw(watermark, "RGBA")
+        
+        font_size = 36
+        font = ImageFont.truetype("arial.ttf", font_size)
+        text_width, text_height = draw.textsize(watermark_text, font=font)
+        text_position = (image.width - text_width - 10, image.height - text_height - 10)
+        
+        draw.text(text_position, watermark_text, font=font, fill=(255, 255, 255, 128))  # Semi-transparent watermark
+        
+        watermarked_image = Image.alpha_composite(image, watermark)
+        watermarked_image.save(output_image_path)
+        logging.info(f"Watermark added and image saved as: {output_image_path}")
+        return True
+    except Exception as e:
+        logging.error(f"Error adding watermark to image: {e}")
+        return False
+
+def add_watermark_to_video(input_video_path, output_video_path, watermark_text="Sample Watermark"):
+    try:
+        video = VideoFileClip(input_video_path)
+        txt_clip = TextClip(watermark_text, fontsize=36, color='white', bg_color='transparent')
+        txt_clip = txt_clip.set_pos(('right', 'bottom')).set_duration(video.duration)
+        
+        watermarked_video = CompositeVideoClip([video, txt_clip])
+        watermarked_video.write_videofile(output_video_path, codec='libx264', audio_codec='aac')
+        video.close()
+        watermarked_video.close()
+        logging.info(f"Watermark added and video saved as: {output_video_path}")
+        return True
+    except Exception as e:
+        logging.error(f"Error adding watermark to video: {e}")
+        return False
 
 def adjust_video_properties(input_path, output_path):
     try:
@@ -132,27 +167,17 @@ def clean_video(input_path, output_path):
         if not force_close_file(temp_output2):
             return False
         
-        # Add background image
-        logging.info(f"Adding background image to {temp_output3}")
-        video = VideoFileClip(temp_output3)
-        bg_width = random.randint(int(video.w * 0.8), video.w)
-        bg_height = random.randint(int(video.h * 0.8), video.h)
-        background = generate_background_image(bg_width, bg_height)
-        background = background.set_opacity(0).set_duration(video.duration)
-        
-        # Center the background
-        pos_x = (video.w - bg_width) // 2
-        pos_y = (video.h - bg_height) // 2
-        
-        final = CompositeVideoClip([video, background.set_position((pos_x, pos_y))])
-        final.write_videofile(output_path, codec='libx264', audio_codec='aac')
-        video.close()
-        final.close()
+        # Add watermark
+        unique_suffix = random.randint(1000, 9999)
+        final_output_path = f"watermarked_{unique_suffix}_{output_path}"
+        logging.info(f"Adding watermark to {temp_output3}")
+        if not add_watermark_to_video(temp_output3, final_output_path):
+            return False
         
         if not force_close_file(temp_output3):
             return False
         
-        logging.info(f"Video cleaned and saved as: {output_path}")
+        logging.info(f"Video cleaned and saved as: {final_output_path}")
         return True
     except Exception as e:
         logging.error(f"Error cleaning video: {e}")
@@ -226,17 +251,9 @@ app.layout = dbc.Container([
                             html.Li("Applies random sharpness adjustment."),
                         ]),
                         html.Li("Changes ICC profile and color space."),
-                        html.Li("Adds an invisible background image:", className="mt-2"),
+                        html.Li("Adds a watermark:", className="mt-2"),
                         html.Ul([
-                            html.Li("Generates a random color background."),
-                            html.Li("Sets dimensions to 80-100% of video size."),
-                            html.Li("Applies zero opacity (invisible)."),
-                            html.Li("Centers the background in the video."),
-                        ]),
-                        html.Li("Video Splitting and Concatenation:", className="mt-2"),
-                        html.Ul([
-                            html.Li("Splits the video into parts using FFmpeg."),
-                            html.Li("Concatenates the parts back together."),
+                            html.Li("Adds a semi-transparent watermark to the video."),
                         ]),
                         html.Li("Saves the processed video and deletes the original."),
                     ])
