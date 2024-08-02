@@ -12,6 +12,7 @@ from dash import html, dcc
 from dash.dependencies import Input, Output, State
 import dash_bootstrap_components as dbc
 import base64
+import numpy as np
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -85,6 +86,32 @@ def add_watermark_to_video(input_video_path, output_video_path, watermark_text="
         logging.error(f"Error adding watermark to video: {e}")
         return False
 
+def add_invisible_watermark_to_video(input_video_path, output_video_path, watermark_text="Sample Watermark"):
+    try:
+        video = VideoFileClip(input_video_path)
+        txt_clip = TextClip(watermark_text, fontsize=24, color='white', bg_color='transparent')
+        
+        # Set the watermark to be semi-transparent
+        txt_clip = txt_clip.set_opacity(0.1)  # Adjust opacity as needed
+        txt_clip = txt_clip.set_pos(('right', 'bottom')).set_duration(video.duration)
+        
+        watermarked_video = CompositeVideoClip([video, txt_clip])
+        watermarked_video.write_videofile(output_video_path, codec='libx264', audio_codec='aac')
+        video.close()
+        watermarked_video.close()
+        logging.info(f"Watermark added and video saved as: {output_video_path}")
+        return True
+    except Exception as e:
+        logging.error(f"Error adding watermark to video: {e}")
+        return False
+
+def apply_random_rotation(video_clip):
+    import numpy as np
+    import random
+
+    angle = random.uniform(-3, 3)  # Random rotation between -3 and 3 degrees
+    return video_clip.rotate(angle)
+
 def adjust_video_properties(input_path, output_path):
     try:
         saturation = random.uniform(0.9, 1.1)
@@ -108,7 +135,7 @@ def adjust_video_properties(input_path, output_path):
     except Exception as e:
         logging.error(f"Error adjusting video properties: {e}")
         return False
-
+    
 def remove_metadata(input_file, output_file):
     command = [
         'ffmpeg', '-i', input_file, '-map_metadata', '-1', '-c:v', 'copy', '-c:a', 'copy', output_file
@@ -144,7 +171,6 @@ def force_close_file(filepath):
 def clean_video(input_path, output_path):
     temp_output1 = f"temp1_video_{random.randint(1000, 9999)}.mp4"
     temp_output2 = f"temp2_video_{random.randint(1000, 9999)}.mp4"
-    temp_output3 = f"temp3_video_{random.randint(1000, 9999)}.mp4"
     try:
         # Adjust video properties
         logging.info(f"Adjusting video properties for {input_path}")
@@ -159,24 +185,19 @@ def clean_video(input_path, output_path):
         logging.info(f"Applying random rotation to {temp_output1}")
         video_clip = VideoFileClip(temp_output1)
         video_clip = apply_random_rotation(video_clip)
+        temp_output2 = f"rotated_{temp_output1}"
         video_clip.write_videofile(temp_output2, codec='libx264', audio_codec='aac')
         video_clip.close()
         
+        # Add invisible watermark
+        logging.info(f"Adding invisible watermark to {temp_output2}")
+        final_output_path = f"watermarked_{random.randint(1000, 9999)}_{output_path}"
+        if not add_invisible_watermark_to_video(temp_output2, final_output_path):
+            return False
+        
         # Remove all metadata
-        logging.info(f"Removing metadata for {temp_output2}")
-        if not remove_metadata(temp_output2, temp_output3):
-            return False
-        
-        if not force_close_file(temp_output2):
-            return False
-        
-        if not os.path.exists(temp_output3):
-            logging.error(f"Error: temp file {temp_output3} does not exist after metadata removal.")
-            return False
-        
-        # Change ICC profile (approximated)
-        logging.info(f"Changing ICC profile for {temp_output3}")
-        if not change_icc_profile(temp_output3, output_path):
+        logging.info(f"Removing metadata for {final_output_path}")
+        if not remove_metadata(final_output_path, output_path):
             return False
         
         logging.info(f"Video cleaned and saved as: {output_path}")
@@ -186,9 +207,9 @@ def clean_video(input_path, output_path):
         return False
     finally:
         # Clean up all temporary files
-        for temp_file in [temp_output1, temp_output2, temp_output3]:
+        for temp_file in [temp_output1, temp_output2]:
             if os.path.exists(temp_file):
-                force_close_file(temp_file)
+                os.remove(temp_file)
 
 def cleanup_temp_files():
     for temp_file in os.listdir('.'):
