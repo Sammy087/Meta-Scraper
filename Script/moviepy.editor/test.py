@@ -21,6 +21,14 @@ def generate_background_image(width, height):
     background = ColorClip((width, height), color=color)
     return background
 
+from moviepy.video.fx import rotate
+
+def apply_random_rotation(video_clip):
+    # Generate a random rotation angle between -3 and 3 degrees
+    angle = random.uniform(-3, 3)
+    rotated_clip = rotate(video_clip, angle)
+    return rotated_clip
+
 def wait_for_file_release(filepath, timeout=10):
     start_time = time.time()
     while time.time() - start_time < timeout:
@@ -147,37 +155,31 @@ def clean_video(input_path, output_path):
             logging.error(f"Error: temp file {temp_output1} does not exist after adjusting video properties.")
             return False
         
+        # Apply random rotation
+        logging.info(f"Applying random rotation to {temp_output1}")
+        video_clip = VideoFileClip(temp_output1)
+        video_clip = apply_random_rotation(video_clip)
+        video_clip.write_videofile(temp_output2, codec='libx264', audio_codec='aac')
+        video_clip.close()
+        
         # Remove all metadata
-        logging.info(f"Removing metadata for {temp_output1}")
-        if not remove_metadata(temp_output1, temp_output2):
-            return False
-        
-        if not force_close_file(temp_output1):
-            return False
-        
-        if not os.path.exists(temp_output2):
-            logging.error(f"Error: temp file {temp_output2} does not exist after metadata removal.")
-            return False
-        
-        # Change ICC profile (approximated)
-        logging.info(f"Changing ICC profile for {temp_output2}")
-        if not change_icc_profile(temp_output2, temp_output3):
+        logging.info(f"Removing metadata for {temp_output2}")
+        if not remove_metadata(temp_output2, temp_output3):
             return False
         
         if not force_close_file(temp_output2):
             return False
         
-        # Add watermark
-        unique_suffix = random.randint(1000, 9999)
-        final_output_path = f"watermarked_{unique_suffix}_{output_path}"
-        logging.info(f"Adding watermark to {temp_output3}")
-        if not add_watermark_to_video(temp_output3, final_output_path):
+        if not os.path.exists(temp_output3):
+            logging.error(f"Error: temp file {temp_output3} does not exist after metadata removal.")
             return False
         
-        if not force_close_file(temp_output3):
+        # Change ICC profile (approximated)
+        logging.info(f"Changing ICC profile for {temp_output3}")
+        if not change_icc_profile(temp_output3, output_path):
             return False
         
-        logging.info(f"Video cleaned and saved as: {final_output_path}")
+        logging.info(f"Video cleaned and saved as: {output_path}")
         return True
     except Exception as e:
         logging.error(f"Error cleaning video: {e}")
