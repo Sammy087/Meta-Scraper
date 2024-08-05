@@ -55,6 +55,10 @@ def sanitize_filename(filename):
     filename = re.sub(r'[^\w\s]', '_', filename)
     return filename[:150]  # Adjust length as needed
 
+def progress_hook(d):
+    if d['status'] == 'finished':
+        print(f"Done downloading video: {d['filename']}")
+
 def download_video(url, output_path):
     # Ensure output_path exists
     if not os.path.exists(output_path):
@@ -65,12 +69,8 @@ def download_video(url, output_path):
         'outtmpl': os.path.join(output_path, '%(title)s.%(ext)s'),
         'format': 'best',
         'noplaylist': True,
-        'progress_hooks': [progress_hook],
+        'progress_hooks': [progress_hook],  # Ensure the progress hook is defined
     }
-
-    def progress_hook(d):
-        if d['status'] == 'finished':
-            print(f"Done downloading video: {d['filename']}")
 
     with youtube_dl.YoutubeDL(ydl_opts) as ydl:
         info_dict = ydl.extract_info(url, download=False)  # Get video info without downloading
