@@ -13,6 +13,11 @@ from dash.dependencies import Input, Output, State
 import dash_bootstrap_components as dbc
 import base64
 import numpy as np
+import os
+import random
+from moviepy.editor import VideoFileClip, CompositeVideoClip, TextClip
+import logging
+from tqdm import tqdm
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -352,3 +357,54 @@ def update_output(n_clicks, video_url, file_contents):
 
 if __name__ == '__main__':
     app.run_server(debug=True)
+
+def process_media(input_path, output_path, num_copies, watermark_text="Sample Watermark"):
+    try:
+        for i in range(num_copies):
+            # Process video or image
+            if input_path.lower().endswith(('mp4', 'mov', 'avi')):
+                output_video_path = f"{output_path}_copy_{i+1}.mp4"
+                add_watermark_to_video(input_path, output_video_path, watermark_text)
+            elif input_path.lower().endswith(('jpg', 'jpeg', 'png')):
+                output_image_path = f"{output_path}_copy_{i+1}.jpg"
+                # Add image processing here
+                pass
+            # Clean metadata here
+            clean_metadata(output_video_path if 'output_video_path' in locals() else output_image_path)
+
+        logging.info("Processing completed for multiple media files.")
+        return True
+    except Exception as e:
+        logging.error(f"Error processing media: {e}")
+        return False
+
+def add_watermark_to_video(input_video_path, output_video_path, watermark_text="Sample Watermark"):
+    try:
+        video = VideoFileClip(input_video_path)
+        txt_clip = TextClip(watermark_text, fontsize=36, color='white', bg_color='transparent')
+        txt_clip = txt_clip.set_pos(('right', 'bottom')).set_duration(video.duration)
+        
+        watermarked_video = CompositeVideoClip([video, txt_clip])
+        watermarked_video.write_videofile(output_video_path, codec='libx264', audio_codec='aac')
+        video.close()
+        watermarked_video.close()
+        logging.info(f"Watermark added and video saved as: {output_video_path}")
+        return True
+    except Exception as e:
+        logging.error(f"Error adding watermark to video: {e}")
+        return False
+
+def clean_metadata(file_path):
+    # Implement metadata cleaning logic here
+    pass
+
+def main():
+    input_path = input("Enter the path of the video or image: ")
+    output_path = input("Enter the output path: ")
+    num_copies = int(input("Enter the number of copies to create: "))
+    watermark_text = input("Enter watermark text (optional): ")
+
+    process_media(input_path, output_path, num_copies, watermark_text)
+
+if __name__ == "__main__":
+    main()
