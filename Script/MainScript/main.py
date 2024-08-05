@@ -18,6 +18,9 @@ import random
 from moviepy.editor import VideoFileClip, CompositeVideoClip, TextClip
 import logging
 from tqdm import tqdm
+import os
+import re
+
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -46,13 +49,37 @@ def wait_for_file_release(filepath, timeout=10):
             time.sleep(0.5)
     return False
 
+
+def sanitize_filename(filename):
+    # Replace non-alphanumeric characters with underscores and limit length
+    filename = re.sub(r'[^\w\s]', '_', filename)
+    return filename[:150]  # Adjust length as needed
+
 def download_video(url, output_path):
+    # Ensure output_path exists
+    if not os.path.exists(output_path):
+        os.makedirs(output_path)
+
+    # Use youtube_dl to download video
     ydl_opts = {
-        'outtmpl': f'{output_path}/%(title)s.%(ext)s',
+        'outtmpl': os.path.join(output_path, '%(title)s.%(ext)s'),
         'format': 'best',
+        'noplaylist': True,
+        'progress_hooks': [progress_hook],
     }
+
+    def progress_hook(d):
+        if d['status'] == 'finished':
+            print(f"Done downloading video: {d['filename']}")
+
     with youtube_dl.YoutubeDL(ydl_opts) as ydl:
+        info_dict = ydl.extract_info(url, download=False)  # Get video info without downloading
+        if 'title' in info_dict:
+            title = sanitize_filename(info_dict['title'])
+            output_path_sanitized = os.path.join(output_path, f"{title}.%(ext)s")
+            ydl_opts['outtmpl'] = output_path_sanitized
         ydl.download([url])
+
 
 def add_watermark_to_image(input_image_path, output_image_path, watermark_text="Sample Watermark"):
     try:
