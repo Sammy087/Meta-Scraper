@@ -270,12 +270,14 @@ app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_
 
 # Define the directory where processed videos are saved
 processed_video_dir = "videos"
+assets_dir = "assets"
 
 # Serve the processed videos
 @app.server.route('/videos/<path:filename>')
 def download_file(filename):
     return send_from_directory(processed_video_dir, filename, as_attachment=True)
 
+# App Layout
 app.layout = dbc.Container([
     dbc.Row([
         dbc.Col([
@@ -283,8 +285,7 @@ app.layout = dbc.Container([
             dbc.Row([
                 dbc.Col([
                     dbc.Label("TikTok Video URL:"),
-                    dbc.Input(id='video-url', type='text',
-                              placeholder='Enter TikTok video URL or upload a file with URLs')
+                    dbc.Input(id='video-url', type='text', placeholder='Enter TikTok video URL or upload a file with URLs')
                 ])
             ]),
             dbc.Row([
@@ -325,8 +326,7 @@ app.layout = dbc.Container([
             ]),
             dbc.Row([
                 dbc.Col([
-                    dbc.Button('Process', id='process-btn', n_clicks=0, color='primary',
-                               className="btn-block")
+                    dbc.Button('Process', id='process-btn', n_clicks=0, color='primary', className="btn-block")
                 ])
             ]),
             dbc.Row([
@@ -371,6 +371,12 @@ app.layout = dbc.Container([
                 className="mt-3 text-muted"),
         ], md=8, className="offset-md-2")
     ], className="mt-4 mb-5"),
+    dbc.Row([
+        dbc.Col([
+            dbc.Button('Download Videos', id='download-btn', color='success', className="btn-block"),
+            dcc.Download(id="download-component")
+        ], md=6, className="offset-md-3")
+    ], className="mt-3"),
     dcc.Store(id='download-urls', data=[]),  # To store the download URLs
 ], fluid=True)
 
@@ -403,36 +409,25 @@ def update_output(n_clicks, video_url, file_contents, num_variations):
         if urls:
             processed_files = process_urls(urls, num_variations)
             if processed_files:
-                # Only one button to download all videos
-                download_button = dbc.Button('Download All Videos', id='download-btn', n_clicks=0, className="btn btn-success")
-                return [upload_status, file_name, download_button, processed_files]
+                return [upload_status, file_name, "Processing complete. You can now download the videos.", processed_files]
 
-        return [upload_status, file_name, "Processing...", []]
+        return [upload_status, file_name, "Processing failed or no URLs provided.", []]
 
     return ["", "", "", []]
 
 @app.callback(
-    Output('download-btn', 'n_clicks'),
-    [Input('download-btn', 'n_clicks')],
-    [State('download-urls', 'data')]
+    Output('download-component', 'data'),
+    Input('download-btn', 'n_clicks'),
+    State('download-urls', 'data')
 )
 def trigger_download(n_clicks, download_urls):
-    # Convert n_clicks to an integer if it's not already
-    try:
-        n_clicks = int(n_clicks)
-    except (ValueError, TypeError):
-        n_clicks = 0
-    
-    if n_clicks > 0 and download_urls:
-        for file in download_urls:
-            download_js = generate_download_js(file)
-            return dash.no_update, download_js
+    if n_clicks and n_clicks > 0 and download_urls:
+        # Handle the first file in the list
+        first_file = download_urls[0]
+        return dcc.send_file(first_file)
 
     return dash.no_update
 
-
-def generate_download_js(file_path):
-    return f"window.open('/videos/{os.path.basename(file_path)}', '_blank');"
 
 def process_urls(urls, num_variations):
     output_path = processed_video_dir
