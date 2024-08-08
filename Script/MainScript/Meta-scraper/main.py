@@ -15,8 +15,6 @@ from moviepy.video.fx import rotate
 import logging
 import os
 import re
-from dash_extensions import Download
-from dash_extensions.snippets import send_file
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -266,6 +264,15 @@ def cleanup_temp_files():
             force_close_file(temp_file)
 
 
+import dash
+from dash import dcc, html, Output, Input, State
+import dash_bootstrap_components as dbc
+import base64
+import os
+import random
+import logging
+import time
+
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
 
 app.layout = dbc.Container([
@@ -303,10 +310,34 @@ app.layout = dbc.Container([
             ]),
             dbc.Row([
                 dbc.Col([
-                    dbc.Button('Download and Clean', id='submit-val', n_clicks=0, color='primary',
+                    dbc.Label("Number of Variations:"),
+                    dcc.Slider(
+                        id='variation-slider',
+                        min=1,
+                        max=30,
+                        step=1,
+                        value=1,
+                        marks={i: str(i) for i in range(1, 31)},
+                        tooltip={"placement": "bottom", "always_visible": True}
+                    )
+                ])
+            ]),
+            dbc.Row([
+                dbc.Col([
+                    dbc.Button('Process', id='process-btn', n_clicks=0, color='primary',
                                className="btn-block")
                 ])
             ]),
+            dbc.Row([
+                dbc.Col([
+                    dcc.Loading(
+                        id="loading-spinner",
+                        type="circle",
+                        children=html.Div(id="processing-output"),
+                        fullscreen=True
+                    )
+                ])
+            ])
         ], md=6, className="offset-md-3")
     ], className="mt-5"),
     dbc.Row([
@@ -341,50 +372,14 @@ app.layout = dbc.Container([
     ], className="mt-4 mb-5")
 ], fluid=True)
 
-
-def process_urls(urls):
-    output_path = "videos"
-    if not os.path.exists(output_path):
-        os.makedirs(output_path)
-
-    for video_url in urls:
-        logging.info(f"Processing URL: {video_url}")
-        try:
-            # Step 1: Download video
-            download_video(video_url, output_path)
-
-            # Step 2: Find the downloaded video file
-            downloaded_files = [f for f in os.listdir(output_path) if
-                                os.path.isfile(os.path.join(output_path, f)) and not f.startswith('cleaned_')]
-            if downloaded_files:
-                for downloaded_file in downloaded_files:
-                    input_video_path = os.path.join(output_path, downloaded_file)
-                    unique_suffix = random.randint(1000, 9999)
-                    output_video_path = os.path.join(output_path, f'cleaned_{unique_suffix}_{downloaded_file}')
-
-                    # Ensure cleanup of temporary files before processing the next video
-                    cleanup_temp_files()
-
-                    # Step 3: Clean the video (adjust video properties, remove metadata, change ICC profile, split and concatenate)
-                    if clean_video(input_video_path, output_video_path):
-                        logging.info(
-                            f'Video downloaded and edited successfully! Edited video saved as: {output_video_path}')
-                        os.remove(input_video_path)  # Remove the original downloaded file
-                    else:
-                        logging.error(f'Failed to clean video: {input_video_path}')
-            else:
-                logging.error('Error: No video found in the output directory.')
-        except Exception as e:
-            logging.error(f"Error processing URL {video_url}: {e}")
-
-
 @app.callback(
-    [Output('upload-status', 'children'), Output('file-name', 'children')],
-    [Input('submit-val', 'n_clicks')],
+    [Output('upload-status', 'children'), Output('file-name', 'children'), Output('processing-output', 'children')],
+    [Input('process-btn', 'n_clicks')],
     [State('video-url', 'value'),
-     State('upload-data', 'contents')]
+     State('upload-data', 'contents'),
+     State('variation-slider', 'value')]
 )
-def update_output(n_clicks, video_url, file_contents):
+def update_output(n_clicks, video_url, file_contents, num_variations):
     if n_clicks > 0:
         urls = []
         upload_status = "No URL or file uploaded."
@@ -403,11 +398,53 @@ def update_output(n_clicks, video_url, file_contents):
             file_name = ""
 
         if urls:
-            process_urls(urls)
-        return [upload_status, file_name]
+            process_urls(urls, num_variations)
+            return [upload_status, file_name, "Video processing complete!"]
+        return [upload_status, file_name, "Processing..."]
 
-    return ["", ""]
+    return ["", "", ""]
 
+def process_urls(urls, num_variations):
+    output_path = "videos"
+    if not os.path.exists(output_path):
+        os.makedirs(output_path)
+
+    for video_url in urls:
+        logging.info(f"Processing URL: {video_url}")
+        try:
+            # Simulate processing delay for demonstration
+            time.sleep(5)
+
+            # Step 1: Download video
+            download_video(video_url, output_path)
+
+            # Step 2: Find the downloaded video file
+            downloaded_files = [f for f in os.listdir(output_path) if
+                                os.path.isfile(os.path.join(output_path, f)) and not f.startswith('cleaned_')]
+            if downloaded_files:
+                for downloaded_file in downloaded_files:
+                    input_video_path = os.path.join(output_path, downloaded_file)
+
+                    # Generate the specified number of variations
+                    for i in range(num_variations):
+                        unique_suffix = random.randint(1000, 9999)
+                        output_video_path = os.path.join(output_path, f'cleaned_{unique_suffix}_{downloaded_file}')
+
+                        # Ensure cleanup of temporary files before processing the next video
+                        cleanup_temp_files()
+
+                        # Step 3: Clean the video (adjust video properties, remove metadata, change ICC profile, split and concatenate)
+                        if clean_video(input_video_path, output_video_path):
+                            logging.info(
+                                f'Video variation {i + 1}/{num_variations} downloaded and edited successfully! Edited video saved as: {output_video_path}')
+                        else:
+                            logging.error(f'Failed to clean video variation {i + 1}/{num_variations}: {input_video_path}')
+
+                    os.remove(input_video_path)  # Remove the original downloaded file after generating all variations
+            else:
+                logging.error('Error: No video found in the output directory.')
+        except Exception as e:
+            logging.error(f"Error processing URL {video_url}: {e}")
 
 if __name__ == '__main__':
     app.run_server(debug=True, host='0.0.0.0')
