@@ -26,13 +26,6 @@ def generate_background_image(width, height):
     return background
 
 
-def apply_random_rotation(video_clip):
-    # Generate a random rotation angle between -3 and 3 degrees
-    angle = random.uniform(-3, 3)
-    rotated_clip = rotate(video_clip, angle)
-    return rotated_clip
-
-
 def wait_for_file_release(filepath, timeout=10):
     start_time = time.time()
     while time.time() - start_time < timeout:
@@ -263,7 +256,6 @@ def cleanup_temp_files():
         if temp_file.startswith('temp'):
             force_close_file(temp_file)
 
-
 import dash
 from dash import dcc, html, Output, Input, State
 import dash_bootstrap_components as dbc
@@ -272,8 +264,17 @@ import os
 import random
 import logging
 import time
+from flask import send_from_directory
 
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
+
+# Define the directory where processed videos are saved
+processed_video_dir = "videos"
+
+# Serve the processed videos
+@app.server.route('/videos/<path:filename>')
+def download_file(filename):
+    return send_from_directory(processed_video_dir, filename, as_attachment=True)
 
 app.layout = dbc.Container([
     dbc.Row([
@@ -369,11 +370,12 @@ app.layout = dbc.Container([
                 "This process helps to obfuscate the video's origin and make it more difficult to detect as a reupload.",
                 className="mt-3 text-muted"),
         ], md=8, className="offset-md-2")
-    ], className="mt-4 mb-5")
+    ], className="mt-4 mb-5"),
+    dcc.Store(id='download-urls', data=[]),  # To store the download URLs
 ], fluid=True)
 
 @app.callback(
-    [Output('upload-status', 'children'), Output('file-name', 'children'), Output('processing-output', 'children')],
+    [Output('upload-status', 'children'), Output('file-name', 'children'), Output('processing-output', 'children'), Output('download-urls', 'data')],
     [Input('process-btn', 'n_clicks')],
     [State('video-url', 'value'),
      State('upload-data', 'contents'),
@@ -384,6 +386,7 @@ def update_output(n_clicks, video_url, file_contents, num_variations):
         urls = []
         upload_status = "No URL or file uploaded."
         file_name = ""
+        processed_files = []
 
         if file_contents:
             content_type, content_string = file_contents.split(',')
@@ -398,16 +401,45 @@ def update_output(n_clicks, video_url, file_contents, num_variations):
             file_name = ""
 
         if urls:
-            process_urls(urls, num_variations)
-            return [upload_status, file_name, "Video processing complete!"]
-        return [upload_status, file_name, "Processing..."]
+            processed_files = process_urls(urls, num_variations)
+            if processed_files:
+                # Only one button to download all videos
+                download_button = dbc.Button('Download All Videos', id='download-btn', n_clicks=0, className="btn btn-success")
+                return [upload_status, file_name, download_button, processed_files]
 
-    return ["", "", ""]
+        return [upload_status, file_name, "Processing...", []]
+
+    return ["", "", "", []]
+
+@app.callback(
+    Output('download-btn', 'n_clicks'),
+    [Input('download-btn', 'n_clicks')],
+    [State('download-urls', 'data')]
+)
+def trigger_download(n_clicks, download_urls):
+    # Convert n_clicks to an integer if it's not already
+    try:
+        n_clicks = int(n_clicks)
+    except (ValueError, TypeError):
+        n_clicks = 0
+    
+    if n_clicks > 0 and download_urls:
+        for file in download_urls:
+            download_js = generate_download_js(file)
+            return dash.no_update, download_js
+
+    return dash.no_update
+
+
+def generate_download_js(file_path):
+    return f"window.open('/videos/{os.path.basename(file_path)}', '_blank');"
 
 def process_urls(urls, num_variations):
-    output_path = "videos"
+    output_path = processed_video_dir
     if not os.path.exists(output_path):
         os.makedirs(output_path)
+
+    processed_files = []
 
     for video_url in urls:
         logging.info(f"Processing URL: {video_url}")
@@ -437,6 +469,7 @@ def process_urls(urls, num_variations):
                         if clean_video(input_video_path, output_video_path):
                             logging.info(
                                 f'Video variation {i + 1}/{num_variations} downloaded and edited successfully! Edited video saved as: {output_video_path}')
+                            processed_files.append(output_video_path)
                         else:
                             logging.error(f'Failed to clean video variation {i + 1}/{num_variations}: {input_video_path}')
 
@@ -445,6 +478,8 @@ def process_urls(urls, num_variations):
                 logging.error('Error: No video found in the output directory.')
         except Exception as e:
             logging.error(f"Error processing URL {video_url}: {e}")
+
+    return processed_files
 
 if __name__ == '__main__':
     app.run_server(debug=True, host='0.0.0.0')
