@@ -15,6 +15,8 @@ from moviepy.video.fx import rotate
 import logging
 import os
 import re
+from dash_extensions import Download
+from dash_extensions.snippets import send_file
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
