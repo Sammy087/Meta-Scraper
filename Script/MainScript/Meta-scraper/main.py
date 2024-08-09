@@ -37,12 +37,50 @@ def wait_for_file_release(filepath, timeout=10):
             time.sleep(0.5)
     return False
 
+def crop_video(input_path, output_path, crop_amount=10):
+    video = VideoFileClip(input_path)
+    cropped_video = video.crop(x1=crop_amount, y1=crop_amount, x2=video.w-crop_amount, y2=video.h-crop_amount)
+    cropped_video.write_videofile(output_path, codec='libx264', audio_codec='aac')
+    video.close()
+    cropped_video.close()
+    logging.info(f"Cropped video saved as: {output_path}")
 
 def sanitize_filename(filename):
     # Replace non-alphanumeric characters with underscores and limit length
     filename = re.sub(r'[^\w\s]', '_', filename)
     return filename[:150]  # Adjust length as needed
 
+from moviepy.editor import AudioFileClip, CompositeAudioClip
+
+def manage_background_noise(input_video_path, output_video_path):
+    video = VideoFileClip(input_video_path)
+    
+    # If there's background noise, remove it
+    if "detect" in dir(video.audio):
+        filtered_audio = video.audio.volumex(0.5)  # Example: Lowering volume by 50%
+    else:
+        # Add background noise
+        noise_clip = AudioFileClip("background_noise.mp3").volumex(0.1)
+        filtered_audio = CompositeAudioClip([video.audio, noise_clip])
+    
+    video = video.set_audio(filtered_audio)
+    video.write_videofile(output_video_path, codec='libx264', audio_codec='aac')
+    video.close()
+    logging.info(f"Background noise managed and video saved as: {output_video_path}")
+
+def manipulate_frames(input_path, output_path):
+    video = VideoFileClip(input_path)
+    frame_list = list(video.iter_frames())
+    
+    # Randomly delete frames
+    frame_list = [frame for i, frame in enumerate(frame_list) if i % random.randint(1, 10) != 0]
+
+    # Recreate video
+    new_video = VideoFileClip(input_path).set_duration(len(frame_list)/video.fps).set_fps(video.fps)
+    new_video.write_videofile(output_path, codec='libx264', audio_codec='aac')
+    video.close()
+    new_video.close()
+    logging.info(f"Frame-manipulated video saved as: {output_path}")
 
 def download_video(url, output_path):
     # Ensure output_path exists
@@ -338,6 +376,12 @@ app.layout = dbc.Container([
                         fullscreen=True
                     )
                 ])
+            ]),
+            dbc.Row([
+                dbc.Col([
+                    dbc.Button('Download Videos', id='download-btn', color='success', className="btn-block mt-3"),
+                    dcc.Download(id="download-component")
+                ])
             ])
         ], md=6, className="offset-md-3")
     ], className="mt-5"),
@@ -371,12 +415,6 @@ app.layout = dbc.Container([
                 className="mt-3 text-muted"),
         ], md=8, className="offset-md-2")
     ], className="mt-4 mb-5"),
-    dbc.Row([
-        dbc.Col([
-            dbc.Button('Download Videos', id='download-btn', color='success', className="btn-block"),
-            dcc.Download(id="download-component")
-        ], md=6, className="offset-md-3")
-    ], className="mt-3"),
     dcc.Store(id='download-urls', data=[]),  # To store the download URLs
 ], fluid=True)
 
@@ -424,10 +462,13 @@ def trigger_download(n_clicks, download_urls):
     if n_clicks and n_clicks > 0 and download_urls:
         # Handle the first file in the list
         first_file = download_urls[0]
-        return dcc.send_file(first_file)
+        if os.path.exists(first_file):
+            logging.info(f"Triggering download for: {first_file}")
+            return dcc.send_file(first_file)
+        else:
+            logging.error(f"File does not exist: {first_file}")
 
     return dash.no_update
-
 
 def process_urls(urls, num_variations):
     output_path = processed_video_dir
@@ -478,7 +519,6 @@ def process_urls(urls, num_variations):
 
 if __name__ == '__main__':
     app.run_server(debug=True, host='0.0.0.0')
-
 
 def process_media(input_path, output_path, num_copies, watermark_text="Sample Watermark"):
     try:
