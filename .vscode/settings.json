@@ -1,0 +1,5 @@
+{
+    "python.analysis.extraPaths": [
+        "./Script/MainScript/dependancies/yt_dlp/postprocessor"
+    ]
+}

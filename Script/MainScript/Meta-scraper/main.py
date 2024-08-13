@@ -15,9 +15,24 @@ from moviepy.video.fx import rotate
 import logging
 import os
 import re
+import autosub
+from subtitle import transcribe_and_add_subtitles
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+def process_video(video_path, output_path):
+    # Call the subtitle function
+    transcribe_and_add_subtitles(video_path, output_path)
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) != 3:
+        print("Usage: python main.py <input_video> <output_video>")
+    else:
+        video_path = sys.argv[1]
+        output_path = sys.argv[2]
+        process_video(video_path, output_path)
 
 
 def generate_background_image(width, height):
