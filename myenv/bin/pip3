@@ -1,4 +1,4 @@
-#!/Users/sammy/Desktop/Meta-Scraper/myenv/bin/python3.12
+#!/Users/sammy/Desktop/Meta-Scraper/myenv/bin/python
 # -*- coding: utf-8 -*-
 import re
 import sys

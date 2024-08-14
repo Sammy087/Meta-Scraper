@@ -15,15 +15,47 @@ from moviepy.video.fx import rotate
 import logging
 import os
 import re
-import autosub
-from subtitle import transcribe_and_add_subtitles
+
+# Import profile management functions
+from profile_manager import create_profile, login, delete_profile
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+# User Authentication
+def main():
+    print("Welcome to the app!")
+    action = input("Enter 'register', 'login', or 'delete': ").strip().lower()
+
+    if action == 'register':
+        username = input("Enter username: ")
+        password = input("Enter password: ")
+        email = input("Enter email: ")
+        create_profile(username, password, email)
+    elif action == 'login':
+        username = input("Enter username: ")
+        password = input("Enter password: ")
+        login(username, password)
+    elif action == 'delete':
+        username = input("Enter username to delete: ")
+        delete_profile(username)
+    else:
+        print("Invalid action.")
+        return
+
+    # Continue to video processing after authentication
+    if __name__ == "__main__":
+        import sys
+        if len(sys.argv) != 3:
+            print("Usage: python main.py <input_video> <output_video>")
+        else:
+            video_path = sys.argv[1]
+            output_path = sys.argv[2]
+            process_video(video_path, output_path)
+
+# Process video
 def process_video(video_path, output_path):
-    # Call the subtitle function
-    transcribe_and_add_subtitles(video_path, output_path)
+ (video_path, output_path)
 
 if __name__ == "__main__":
     import sys
@@ -310,20 +342,46 @@ def cleanup_temp_files():
             force_close_file(temp_file)
 
 import dash
-from dash import dcc, html, Output, Input, State
+from dash import dcc, html, Output, Input, State, ctx
 import dash_bootstrap_components as dbc
 import base64
 import os
 import random
 import logging
 import time
-from flask import send_from_directory
+from flask import send_from_directory, session, redirect, url_for
+from werkzeug.security import generate_password_hash, check_password_hash
+import sqlite3
 
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
 
 # Define the directory where processed videos are saved
 processed_video_dir = "videos"
 assets_dir = "assets"
+db_file = "users.db"
+
+# Initialize the SQLite database
+def init_db():
+    with sqlite3.connect(db_file) as conn:
+        c = conn.cursor()
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT UNIQUE NOT NULL,
+                password TEXT NOT NULL
+            )
+        ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS user_assets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                asset_path TEXT NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users (id)
+            )
+        ''')
+        conn.commit()
+
+init_db()
 
 # Serve the processed videos
 @app.server.route('/videos/<path:filename>')
@@ -334,6 +392,12 @@ def download_file(filename):
 app.layout = dbc.Container([
     dbc.Row([
         dbc.Col([
+            dbc.Row([
+                dbc.Col([
+                    html.Button(html.Img(src='assets/profile_icon.png', style={'width': '24px', 'height': '24px'}),
+                                id='profile-btn', n_clicks=0, style={'float': 'right', 'border': 'none'}),
+                ], width='auto')
+            ]),
             html.H2("TikTok Video Downloader & Cleaner", className="text-center mb-4"),
             dbc.Row([
                 dbc.Col([
@@ -430,17 +494,105 @@ app.layout = dbc.Container([
                 className="mt-3 text-muted"),
         ], md=8, className="offset-md-2")
     ], className="mt-4 mb-5"),
+    dbc.Modal([
+        dbc.ModalHeader(dbc.ModalTitle("Profile")),
+        dbc.ModalBody([
+            dbc.Tabs([
+                dbc.Tab([
+                    html.Div([
+                        dbc.Input(id='login-email', type='email', placeholder='Email'),
+                        dbc.Input(id='login-password', type='password', placeholder='Password'),
+                        dbc.Button('Login', id='login-btn', n_clicks=0, color='primary', className='mt-2')
+                    ])
+                ], label="Login"),
+                dbc.Tab([
+                    html.Div([
+                        dbc.Input(id='signup-email', type='email', placeholder='Email'),
+                        dbc.Input(id='signup-password', type='password', placeholder='Password'),
+                        dbc.Button('Sign Up', id='signup-btn', n_clicks=0, color='primary', className='mt-2')
+                    ])
+                ], label="Sign Up"),
+                dbc.Tab([
+                    html.Div([
+                        dbc.Button('Logout', id='logout-btn', n_clicks=0, color='secondary', className='mt-2')
+                    ])
+                ], label="Logout")
+            ])
+        ]),
+        dbc.ModalFooter(dbc.Button('Close', id='close-modal', className='ml-auto'))
+    ], id='profile-modal', is_open=False),
+    dcc.Store(id='user-data', data={}),  # Store user session data
     dcc.Store(id='download-urls', data=[]),  # To store the download URLs
 ], fluid=True)
 
+# Profile modal callback
 @app.callback(
-    [Output('upload-status', 'children'), Output('file-name', 'children'), Output('processing-output', 'children'), Output('download-urls', 'data')],
+    Output('profile-modal', 'is_open'),
+    [Input('profile-btn', 'n_clicks'),
+     Input('close-modal', 'n_clicks')],
+    [State('profile-modal', 'is_open')]
+)
+def toggle_modal(profile_btn, close_modal, is_open):
+    if ctx.triggered_id == 'profile-btn':
+        return not is_open
+    if ctx.triggered_id == 'close-modal':
+        return not is_open
+    return is_open
+
+# Unified authentication callback
+@app.callback(
+    Output('user-data', 'data'),
+    [Input('login-btn', 'n_clicks'),
+     Input('signup-btn', 'n_clicks'),
+     Input('logout-btn', 'n_clicks')],
+    [State('login-email', 'value'),
+     State('login-password', 'value'),
+     State('signup-email', 'value'),
+     State('signup-password', 'value')]
+)
+def handle_authentication(login_clicks, signup_clicks, logout_clicks, login_email, login_password, signup_email, signup_password):
+    triggered_id = ctx.triggered_id
+
+    if triggered_id == 'login-btn' and login_email and login_password:
+        with sqlite3.connect(db_file) as conn:
+            c = conn.cursor()
+            c.execute('SELECT password FROM users WHERE email = ?', (login_email,))
+            user = c.fetchone()
+            if user and check_password_hash(user[0], login_password):
+                session['email'] = login_email
+                return {'email': login_email}
+    
+    elif triggered_id == 'signup-btn' and signup_email and signup_password:
+        hashed_password = generate_password_hash(signup_password)
+        with sqlite3.connect(db_file) as conn:
+            c = conn.cursor()
+            try:
+                c.execute('INSERT INTO users (email, password) VALUES (?, ?)', (signup_email, hashed_password))
+                conn.commit()
+                session['email'] = signup_email
+                return {'email': signup_email}
+            except sqlite3.IntegrityError:
+                logging.error('User already exists.')
+
+    elif triggered_id == 'logout-btn':
+        session.pop('email', None)
+        return {}
+
+    return dash.no_update
+
+# Update output callback
+@app.callback(
+    [Output('upload-status', 'children'),
+     Output('file-name', 'children'),
+     Output('processing-output', 'children'),
+     Output('download-urls', 'data')],
     [Input('process-btn', 'n_clicks')],
     [State('video-url', 'value'),
      State('upload-data', 'contents'),
-     State('variation-slider', 'value')]
+     State('variation-slider', 'value'),
+     State('user-data', 'data')]
 )
-def update_output(n_clicks, video_url, file_contents, num_variations):
+def update_output(n_clicks, video_url, file_contents, num_variations, user_data):
     if n_clicks > 0:
         urls = []
         upload_status = "No URL or file uploaded."
@@ -462,12 +614,19 @@ def update_output(n_clicks, video_url, file_contents, num_variations):
         if urls:
             processed_files = process_urls(urls, num_variations)
             if processed_files:
+                # Save user assets if logged in
+                if 'email' in user_data:
+                    user_email = user_data['email']
+                    user_id = get_user_id(user_email)
+                    if user_id:
+                        save_user_assets(user_id, processed_files)
                 return [upload_status, file_name, "Processing complete. You can now download the videos.", processed_files]
 
         return [upload_status, file_name, "Processing failed or no URLs provided.", []]
 
     return ["", "", "", []]
 
+# Download callback
 @app.callback(
     Output('download-component', 'data'),
     Input('download-btn', 'n_clicks'),
@@ -531,6 +690,25 @@ def process_urls(urls, num_variations):
             logging.error(f"Error processing URL {video_url}: {e}")
 
     return processed_files
+
+def cleanup_temp_files():
+    temp_files = [f for f in os.listdir(processed_video_dir) if f.endswith('.temp')]
+    for temp_file in temp_files:
+        os.remove(os.path.join(processed_video_dir, temp_file))
+
+def get_user_id(email):
+    with sqlite3.connect(db_file) as conn:
+        c = conn.cursor()
+        c.execute('SELECT id FROM users WHERE email = ?', (email,))
+        user = c.fetchone()
+        return user[0] if user else None
+
+def save_user_assets(user_id, assets):
+    with sqlite3.connect(db_file) as conn:
+        c = conn.cursor()
+        for asset in assets:
+            c.execute('INSERT INTO user_assets (user_id, asset_path) VALUES (?, ?)', (user_id, asset))
+        conn.commit()
 
 if __name__ == '__main__':
     app.run_server(debug=True, host='0.0.0.0')
