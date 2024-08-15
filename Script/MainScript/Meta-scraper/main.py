@@ -22,6 +22,12 @@ from profile_manager import create_profile, login, delete_profile
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+from profile_manager import create_profile, login, delete_profile
+
+create_profile('newuser', 'newpassword', 'newuser@example.com')
+login('newuser', 'newpassword')
+delete_profile('newuser')
+
 # User Authentication
 def main():
     print("Welcome to the app!")
