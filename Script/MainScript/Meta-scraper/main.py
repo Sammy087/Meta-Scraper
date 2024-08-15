@@ -15,18 +15,202 @@ from moviepy.video.fx import rotate
 import logging
 import os
 import re
-
-# Import profile management functions
+import cv2
+import numpy as np
+import json
+import pytesseract
+import logging
+import os
 from profile_manager import create_profile, login, delete_profile
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-from profile_manager import create_profile, login, delete_profile
+# Load emoji data
+def load_emoji_data(filename='emoji.json'):
+    with open(filename, 'r') as f:
+        return json.load(f)
 
-create_profile('newuser', 'newpassword', 'newuser@example.com')
-login('newuser', 'newpassword')
-delete_profile('newuser')
+emoji_data = load_emoji_data()
+emoji_list = [emoji['unicode'] for emoji in emoji_data]
+
+def load_templates():
+    """Load grayscale template images."""
+    templates = {}
+    templates['logo'] = cv2.imread(os.path.join('templates', 'logo_template.png'), cv2.IMREAD_GRAYSCALE)
+    templates['emoji'] = cv2.imread(os.path.join('templates', 'emoji_template.png'), cv2.IMREAD_GRAYSCALE)
+    return templates
+
+templates = load_templates()
+
+def detect_objects_in_frame(frame):
+    """Detect objects in a single video frame using template matching."""
+    gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    detected_objects = []
+
+    for key, template in templates.items():
+        if template is not None:
+            result = cv2.matchTemplate(gray_frame, template, cv2.TM_CCOEFF_NORMED)
+            threshold = 0.8
+            locations = np.where(result >= threshold)
+            for pt in zip(*locations[::-1]):
+                detected_objects.append((pt, key))
+                # Mask the detected object area
+                h, w = template.shape
+                cv2.rectangle(frame, pt, (pt[0] + w, pt[1] + h), (0, 0, 0), -1)
+
+    return frame, detected_objects
+
+def detect_emoji_in_frame(frame):
+    """Detect emojis in a single video frame."""
+    gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    detected_emojis = []
+    for emoji in emoji_list:
+        # Create a simple image of the emoji or use an existing template
+        emoji_template = np.zeros_like(frame)  # Placeholder for actual emoji image
+        result = cv2.matchTemplate(gray_frame, emoji_template, cv2.TM_CCOEFF_NORMED)
+        threshold = 0.8
+        locations = np.where(result >= threshold)
+        for pt in zip(*locations[::-1]):
+            detected_emojis.append(pt)
+            # Mask the detected emoji area
+            cv2.rectangle(frame, pt, (pt[0] + emoji_template.shape[1], pt[1] + emoji_template.shape[0]), (0, 0, 0), -1)
+    return frame, detected_emojis
+
+def process_video(input_path, output_path):
+    """Process video file to detect and mask objects."""
+    cap = cv2.VideoCapture(input_path)
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(output_path, fourcc, 30.0, (int(cap.get(3)), int(cap.get(4))))
+
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        # Detect and mask objects (including emojis)
+        processed_frame, detected_objects = detect_objects_in_frame(frame)
+        processed_frame, detected_emojis = detect_emoji_in_frame(processed_frame)
+        out.write(processed_frame)
+
+    cap.release()
+    out.release()
+
+def segment_video_to_frames(video_path):
+    """Extract frames from a video."""
+    cap = cv2.VideoCapture(video_path)
+    frames = []
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+        frames.append(frame)
+    cap.release()
+    return frames
+
+def analyze_and_mask_frame(frame):
+    """Analyze and mask text, logos, or emojis in a frame."""
+    gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+    # Detect text (captions)
+    text = pytesseract.image_to_string(gray_frame)
+    if text.strip():
+        # Mask text
+        frame = cv2.rectangle(frame, (10, 10), (110, 50), (0, 0, 0), -1)  # Example mask
+
+    # Paths to template images
+    template_paths = ['templates/logo_template.png', 'templates/emoji_template.png']
+
+    for template_path in template_paths:
+        # Load template image and convert to grayscale
+        template = cv2.imread(template_path, 0)
+        if template is None:
+            logging.warning(f"Template {template_path} not found.")
+            continue
+
+        # Perform template matching
+        res = cv2.matchTemplate(gray_frame, template, cv2.TM_CCOEFF_NORMED)
+        threshold = 0.8
+        loc = np.where(res >= threshold)
+
+        # Draw rectangles around detected areas
+        for pt in zip(*loc[::-1]):
+            h, w = template.shape[:2]
+            cv2.rectangle(frame, pt, (pt[0] + w, pt[1] + h), (0, 0, 0), -1)
+
+    return frame
+
+def recompile_video_from_frames(frames, original_video_path):
+    """Recompile video from frames."""
+    height, width, layers = frames[0].shape
+    fps = 24  # Default FPS value; adjust as needed
+    
+    # Reconstructing the video
+    output_path = original_video_path.replace(".mp4", "_processed.mp4")
+    video = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (width, height))
+
+    for frame in frames:
+        video.write(frame)
+
+    video.release()
+    return output_path
+
+def process_video_pipeline(video_path):
+    """Full video processing pipeline."""
+    # Step 1: Segment video into frames
+    frames = segment_video_to_frames(video_path)
+
+    # Step 2: Analyze and mask frames
+    processed_frames = [analyze_and_mask_frame(frame) for frame in frames]
+
+    # Step 3: Recompile the video
+    output_video_path = recompile_video_from_frames(processed_frames, video_path)
+
+    return output_video_path
+
+if __name__ == "__main__":
+    video_folder = "videos"
+    for filename in os.listdir(video_folder):
+        if filename.endswith(".mp4"):
+            video_path = os.path.join(video_folder, filename)
+            print(f"Processing {video_path}...")
+            processed_video_path = process_video_pipeline(video_path)
+            print(f"Processed video saved at {processed_video_path}")
+
+def analyze_and_mask_frame(frame):
+    """Analyze and mask text, logos, or emojis in a frame."""
+    gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+    # Detect text (captions) using pytesseract
+    text_boxes = pytesseract.image_to_boxes(gray_frame)
+    for box in text_boxes.splitlines():
+        b = box.split()
+        if len(b) == 5:
+            x, y, w, h = int(b[1]), int(b[2]), int(b[3]), int(b[4])
+            cv2.rectangle(frame, (x, frame.shape[0] - y), (w, frame.shape[0] - h), (0, 0, 0), -1)  # Mask text area
+
+    # Paths to template images
+    template_paths = ['templates/logo_template.png', 'templates/emoji_template.png']
+
+    for template_path in template_paths:
+        # Load template image and convert to grayscale
+        template = cv2.imread(template_path, 0)
+        if template is None:
+            logging.warning(f"Template {template_path} not found.")
+            continue
+
+        # Perform template matching
+        res = cv2.matchTemplate(gray_frame, template, cv2.TM_CCOEFF_NORMED)
+        threshold = 0.8
+        loc = np.where(res >= threshold)
+
+        # Draw rectangles around detected areas
+        for pt in zip(*loc[::-1]):
+            h, w = template.shape[:2]
+            cv2.rectangle(frame, pt, (pt[0] + w, pt[1] + h), (0, 0, 0), -1)
+
+    return frame
+
 
 # User Authentication
 def main():
