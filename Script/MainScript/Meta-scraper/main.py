@@ -22,14 +22,38 @@ import pytesseract
 import logging
 import os
 from profile_manager import create_profile, login, delete_profile
-import pytube
-from video_process import process_video
+import os
+import logging
+from video_process import process_video_pipeline
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+
+def main():
+    videos_folder = 'videos'
+    video_files = [f for f in os.listdir(videos_folder) if os.path.isfile(os.path.join(videos_folder, f))]
+
+    if not video_files:
+        logging.info("No videos found in the 'videos' folder. Exiting.")
+        return
+
+    for video_file in video_files:
+        video_path = os.path.join(videos_folder, video_file)
+        logging.info(f"Processing video: {video_path}")
+
+        # Process the video only if it exists
+        if os.path.exists(video_path):
+            processed_video_path = process_video_pipeline(video_path)
+            if processed_video_path:
+                logging.info(f"Processed video saved to: {processed_video_path}")
+            else:
+                logging.error(f"Failed to process video: {video_path}")
+        else:
+            logging.error(f"Video file not found: {video_path}")
 
 if __name__ == "__main__":
-    # Define input and output video paths
-    input_video_path = '/Users/sammy/Desktop/Meta-Scraper/Script/MainScript/Meta-scraper/videos/downloaded_video.mp4'
-    output_video_path = '/Users/sammy/Desktop/Meta-Scraper/Script/MainScript/Meta-scraper/videos/processed_video.mp4'
-    process_video(input_video_path, output_video_path)
+    main()
+
 
 
 # Set up logging
@@ -185,41 +209,6 @@ if __name__ == "__main__":
             print(f"Processing {video_path}...")
             processed_video_path = process_video_pipeline(video_path)
             print(f"Processed video saved at {processed_video_path}")
-
-def analyze_and_mask_frame(frame):
-    """Analyze and mask text, logos, or emojis in a frame."""
-    gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
-    # Detect text (captions) using pytesseract
-    text_boxes = pytesseract.image_to_boxes(gray_frame)
-    for box in text_boxes.splitlines():
-        b = box.split()
-        if len(b) == 5:
-            x, y, w, h = int(b[1]), int(b[2]), int(b[3]), int(b[4])
-            cv2.rectangle(frame, (x, frame.shape[0] - y), (w, frame.shape[0] - h), (0, 0, 0), -1)  # Mask text area
-
-    # Paths to template images
-    template_paths = ['templates/logo_template.png', 'templates/emoji_template.png']
-
-    for template_path in template_paths:
-        # Load template image and convert to grayscale
-        template = cv2.imread(template_path, 0)
-        if template is None:
-            logging.warning(f"Template {template_path} not found.")
-            continue
-
-        # Perform template matching
-        res = cv2.matchTemplate(gray_frame, template, cv2.TM_CCOEFF_NORMED)
-        threshold = 0.8
-        loc = np.where(res >= threshold)
-
-        # Draw rectangles around detected areas
-        for pt in zip(*loc[::-1]):
-            h, w = template.shape[:2]
-            cv2.rectangle(frame, pt, (pt[0] + w, pt[1] + h), (0, 0, 0), -1)
-
-    return frame
-
 
 # User Authentication
 def main():
@@ -776,6 +765,70 @@ def handle_authentication(login_clicks, signup_clicks, logout_clicks, login_emai
     elif triggered_id == 'logout-btn':
         session.pop('email', None)
         return {}
+
+    return dash.no_update
+
+# Update output callback
+@app.callback(
+    [Output('upload-status', 'children'),
+     Output('file-name', 'children'),
+     Output('processing-output', 'children'),
+     Output('download-urls', 'data')],
+    [Input('process-btn', 'n_clicks')],
+    [State('video-url', 'value'),
+     State('upload-data', 'contents'),
+     State('variation-slider', 'value'),
+     State('user-data', 'data')]
+)
+def update_output(n_clicks, video_url, file_contents, num_variations, user_data):
+    if n_clicks > 0:
+        urls = []
+        upload_status = "No URL or file uploaded."
+        file_name = ""
+        processed_files = []
+
+        if file_contents:
+            content_type, content_string = file_contents.split(',')
+            decoded = base64.b64decode(content_string)
+            urls = decoded.decode('utf-8').splitlines()
+            upload_status = "File uploaded successfully!"
+            file_name = "Uploaded file with URLs."
+
+        elif video_url:
+            urls = [video_url]
+            upload_status = "URL processed successfully!"
+            file_name = ""
+
+        if urls:
+            processed_files = process_urls(urls, num_variations)
+            if processed_files:
+                # Save user assets if logged in
+                if 'email' in user_data:
+                    user_email = user_data['email']
+                    user_id = get_user_id(user_email)
+                    if user_id:
+                        save_user_assets(user_id, processed_files)
+                return [upload_status, file_name, "Processing complete. You can now download the videos.", processed_files]
+
+        return [upload_status, file_name, "Processing failed or no URLs provided.", []]
+
+    return ["", "", "", []]
+
+# Download callback
+@app.callback(
+    Output('download-component', 'data'),
+    Input('download-btn', 'n_clicks'),
+    State('download-urls', 'data')
+)
+def trigger_download(n_clicks, download_urls):
+    if n_clicks and n_clicks > 0 and download_urls:
+        # Handle the first file in the list
+        first_file = download_urls[0]
+        if os.path.exists(first_file):
+            logging.info(f"Triggering download for: {first_file}")
+            return dcc.send_file(first_file)
+        else:
+            logging.error(f"File does not exist: {first_file}")
 
     return dash.no_update
 
