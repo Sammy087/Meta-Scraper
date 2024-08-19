@@ -1,54 +1,107 @@
-# profile_manager.py
-import sqlite3
-from werkzeug.security import generate_password_hash, check_password_hash
+import os
+import cv2
+import numpy as np
+import pytesseract
+import logging
 
-def create_profile(username, password, email):
-    conn = sqlite3.connect('users.db')
-    cursor = conn.cursor()
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-    try:
-        hashed_password = generate_password_hash(password)
-        cursor.execute('''
-        INSERT INTO users (username, password, email)
-        VALUES (?, ?, ?)
-        ''', (username, hashed_password, email))
-        conn.commit()
-        print(f"Profile for {username} created successfully.")
-    except sqlite3.IntegrityError:
-        print("Username already exists.")
-    finally:
-        conn.close()
+def load_emoji_templates():
+    emoji_templates = []
+    emoji_folder = 'templates/emojis'
+    for filename in os.listdir(emoji_folder):
+        if filename.endswith('.png'):
+            template = cv2.imread(os.path.join(emoji_folder, filename), cv2.IMREAD_GRAYSCALE)
+            emoji_templates.append(template)
+    return emoji_templates
 
-def login(username, password):
-    conn = sqlite3.connect('users.db')
-    cursor = conn.cursor()
+def load_logo_templates():
+    logo_templates = []
+    logo_folder = 'templates/logos'
+    for filename in os.listdir(logo_folder):
+        if filename.endswith('.png'):
+            template = cv2.imread(os.path.join(logo_folder, filename), cv2.IMREAD_GRAYSCALE)
+            logo_templates.append(template)
+    return logo_templates
 
-    cursor.execute('SELECT password FROM users WHERE username = ?', (username,))
-    record = cursor.fetchone()
+def load_other_templates():
+    other_templates = []
+    other_folder = 'templates/other'
+    for filename in os.listdir(other_folder):
+        if filename.endswith('.png'):
+            template = cv2.imread(os.path.join(other_folder, filename), cv2.IMREAD_GRAYSCALE)
+            other_templates.append(template)
+    return other_templates
 
-    if record and check_password_hash(record[0], password):
-        print(f"Login successful. Welcome, {username}!")
-        return True
-    else:
-        print("Login failed. Invalid username or password.")
-        return False
+emoji_templates = load_emoji_templates()
+logo_templates = load_logo_templates()
+other_templates = load_other_templates()
 
-def delete_profile(username):
-    conn = sqlite3.connect('users.db')
-    cursor = conn.cursor()
+def detect_and_mask_captions(frame):
+    gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    text = pytesseract.image_to_string(gray_frame)
+    
+    if text.strip():
+        h, w = frame.shape[:2]
+        cv2.rectangle(frame, (0, h - 100), (w, h), (0, 0, 0), -1)  # Example mask
 
-    cursor.execute('DELETE FROM users WHERE username = ?', (username,))
-    conn.commit()
+    return frame
 
-    if cursor.rowcount > 0:
-        print(f"Profile for {username} deleted successfully.")
-    else:
-        print(f"Profile for {username} not found.")
+def detect_and_mask_templates(frame, templates):
+    gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-    conn.close()
+    for template in templates:
+        h, w = template.shape[:2]
+        result = cv2.matchTemplate(gray_frame, template, cv2.TM_CCOEFF_NORMED)
+        threshold = 0.8
+        locations = np.where(result >= threshold)
+
+        for pt in zip(*locations[::-1]):
+            cv2.rectangle(frame, pt, (pt[0] + w, pt[1] + h), (0, 0, 0), -1)
+
+    return frame
+
+def process_video(input_path, output_path):
+    if not os.path.isfile(input_path):
+        logging.error(f"Input file does not exist: {input_path}")
+        return
+
+    cap = cv2.VideoCapture(input_path)
+    if not cap.isOpened():
+        logging.error(f"Couldn't open video file: {input_path}")
+        return
+
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(output_path, fourcc, 30.0, (int(cap.get(3)), int(cap.get(4))))
+
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        # Detect and mask captions
+        frame = detect_and_mask_captions(frame)
+        
+        # Detect and mask logos
+        if logo_templates:
+            frame = detect_and_mask_templates(frame, logo_templates)
+        
+        # Detect and mask emojis
+        if emoji_templates:
+            frame = detect_and_mask_templates(frame, emoji_templates)
+
+        # Detect and mask other elements
+        if other_templates:
+            frame = detect_and_mask_templates(frame, other_templates)
+
+        out.write(frame)
+
+    cap.release()
+    out.release()
+    logging.info(f"Video processed and saved to {output_path}")
 
 if __name__ == "__main__":
-    # Example usage
-    create_profile('testuser', 'password123', 'testuser@example.com')
-    login('testuser', 'password123')
-    delete_profile('testuser')
+    input_video_path = 'path_to_input_video.mp4'
+    output_video_path = 'path_to_output_video.mp4'
+    process_video(input_video_path, output_video_path)

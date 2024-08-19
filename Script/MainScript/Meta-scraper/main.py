@@ -22,6 +22,15 @@ import pytesseract
 import logging
 import os
 from profile_manager import create_profile, login, delete_profile
+import pytube
+from video_process import process_video
+
+if __name__ == "__main__":
+    # Define input and output video paths
+    input_video_path = '/Users/sammy/Desktop/Meta-Scraper/Script/MainScript/Meta-scraper/videos/downloaded_video.mp4'
+    output_video_path = '/Users/sammy/Desktop/Meta-Scraper/Script/MainScript/Meta-scraper/videos/processed_video.mp4'
+    process_video(input_video_path, output_video_path)
+
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
